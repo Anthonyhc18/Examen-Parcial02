@@ -19,7 +19,7 @@ MANIFEST_FILE="$BUILD_DIR/kernel-manifest.json"
 # ── Configuración: el docente debe actualizar estos valores ──────────────────
 # REPO: organización/nombre-del-repo donde está el Release
 # RELEASE_TAG: el tag del Release creado por el workflow build-kernel-image.yml
-REPO="${KERNEL_REPO:-}"        # ej: "mi-org/copy-fail-challenge"
+REPO="${KERNEL_REPO:-}"        # ej: "mi-org/Examen-Parcial02"
 RELEASE_TAG="${KERNEL_RELEASE_TAG:-kernel-v6.12-vuln}"
 BZIMAGE_ASSET="bzImage_vuln"
 
@@ -43,7 +43,7 @@ fi
 if [ -z "$REPO" ]; then
   echo -e "${RED}Error: No se pudo detectar el repositorio GitHub.${NC}"
   echo "Configura la variable de entorno:"
-  echo "  export KERNEL_REPO='tu-org/copy-fail-challenge'"
+  echo "  export KERNEL_REPO='tu-org/Examen-Parcial02'"
   echo "  make fetch-kernel"
   exit 1
 fi

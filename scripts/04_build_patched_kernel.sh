@@ -73,7 +73,7 @@ echo -e "${GREEN}  ✓ Kernel parcheado → kernel/build/bzImage_patched${NC}"
 
 echo ""
 echo -e "${CYAN}[4/4] Reconstruyendo initramfs con kernel parcheado...${NC}"
-cd /workspaces/copy-fail-challenge
+cd /workspaces/Examen-Parcial02
 BZIMAGE_BACKUP="$BUILD_DIR/bzImage_vuln"
 cp "$BUILD_DIR/bzImage_patched" "$BUILD_DIR/bzImage_vuln"
 bash scripts/02_build_rootfs.sh
