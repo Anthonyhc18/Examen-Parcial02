@@ -1,0 +1,5 @@
+=== HITO 2: EXPLOIT EXITOSO ===
+Fecha: Fri May 22 05:45:10 UTC 2026
+Hostname: codespaces-0a242e
+Identidad POST-exploit: uid=0(root) gid=0(root) groups=0(root)
+Kernel: 6.8.0-1044-azure
