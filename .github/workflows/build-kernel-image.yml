@@ -1,0 +1,215 @@
+name: "Build Vulnerable Kernel (teacher runs once)"
+
+# ── CUÁNDO EJECUTAR ────────────────────────────────────────────────────────────
+# El docente dispara este workflow manualmente una sola vez antes del examen.
+# El resultado es un Release con el bzImage listo para que los estudiantes lo descarguen.
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_tag:
+        description: "Tag del kernel Linux a compilar (vulnerable, anterior al fix)"
+        required: true
+        default: "v6.12"
+      release_tag:
+        description: "Tag del release a crear (ej: kernel-v6.12-vuln)"
+        required: true
+        default: "kernel-v6.12-vuln"
+      release_notes:
+        description: "Notas del release"
+        required: false
+        default: "Kernel vulnerable CVE-2026-31431 — solo para uso en el laboratorio controlado"
+
+# ── PERMISOS ───────────────────────────────────────────────────────────────────
+permissions:
+  contents: write   # para crear el Release y subir assets
+
+jobs:
+  build-kernel:
+    name: "Compilar bzImage vulnerable"
+    # ubuntu-latest tiene 4 cores, 16 GB RAM, 14 GB disco — suficiente para el kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      # ── 1. Instalar dependencias de compilación ────────────────────────────
+      - name: Instalar herramientas de compilación del kernel
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            git make gcc flex bison bc \
+            libncurses-dev libelf-dev libssl-dev \
+            cpio pahole dwarves \
+            zstd
+
+      # ── 2. Clonar kernel en el tag vulnerable ─────────────────────────────
+      - name: Clonar kernel ${{ github.event.inputs.kernel_tag }}
+        run: |
+          echo "Clonando linux ${{ github.event.inputs.kernel_tag }} ..."
+          git clone --depth 1 \
+            --branch "${{ github.event.inputs.kernel_tag }}" \
+            https://github.com/torvalds/linux.git \
+            linux-src
+          
+          cd linux-src
+          echo "KERNEL_COMMIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "KERNEL_DATE=$(git log -1 --format=%cd --date=short)" >> $GITHUB_ENV
+          echo "Commit: $(git rev-parse HEAD)"
+          echo "Fecha: $(git log -1 --format=%cd --date=short)"
+
+      # ── 3. Configurar: tinyconfig + algif_aead + QEMU serial ──────────────
+      - name: Configurar kernel (algif_aead habilitado)
+        working-directory: linux-src
+        run: |
+          make tinyconfig
+          
+          # 64-bit
+          ./scripts/config --enable 64BIT
+          # Consola serie para QEMU -nographic
+          ./scripts/config --enable SERIAL_8250
+          ./scripts/config --enable SERIAL_8250_CONSOLE
+          ./scripts/config --enable TTY
+          # initramfs
+          ./scripts/config --enable BLK_DEV_INITRD
+          ./scripts/config --enable INITRAMFS_SOURCE
+          ./scripts/config --enable TMPFS
+          # Red y sockets
+          ./scripts/config --enable NET
+          ./scripts/config --enable UNIX
+          ./scripts/config --enable INET
+          # ── Subsistema criptográfico — LA PARTE VULNERABLE ────────────────
+          ./scripts/config --enable CRYPTO
+          ./scripts/config --enable CRYPTO_USER_API          # AF_ALG socket
+          ./scripts/config --enable CRYPTO_USER_API_AEAD     # algif_aead ← VULN
+          ./scripts/config --enable CRYPTO_USER_API_SKCIPHER
+          ./scripts/config --enable CRYPTO_AEAD
+          ./scripts/config --enable CRYPTO_AUTHENCESN        # scratch-write bug
+          ./scripts/config --enable CRYPTO_AES
+          ./scripts/config --enable CRYPTO_CBC
+          ./scripts/config --enable CRYPTO_HMAC
+          ./scripts/config --enable CRYPTO_SHA256
+          # Usuarios y setuid (para la escalada de privilegios)
+          ./scripts/config --enable MULTIUSER
+          # Misc necesario para arrancar
+          ./scripts/config --enable PRINTK
+          ./scripts/config --enable EARLY_PRINTK
+          ./scripts/config --enable PROC_FS
+          ./scripts/config --enable SYSFS
+          ./scripts/config --enable DEVTMPFS
+          ./scripts/config --enable DEVTMPFS_MOUNT
+          
+          make olddefconfig
+          
+          # Verificar que el módulo vulnerable está habilitado
+          grep "CONFIG_CRYPTO_USER_API_AEAD" .config && echo "✓ algif_aead habilitado" || echo "✗ ADVERTENCIA: no encontrado"
+          grep "CONFIG_CRYPTO_AUTHENCESN" .config && echo "✓ authencesn habilitado" || echo "✗ ADVERTENCIA: no encontrado"
+
+      # ── 4. Compilar (4 cores en el runner de GitHub) ──────────────────────
+      - name: Compilar bzImage
+        working-directory: linux-src
+        run: |
+          echo "Iniciando compilación con $(nproc) cores..."
+          START=$(date +%s)
+          make -j$(nproc) bzImage 2>&1 | tail -20
+          END=$(date +%s)
+          echo "Tiempo total: $((END - START)) segundos (~$((($END-$START)/60)) min)"
+          ls -lh arch/x86/boot/bzImage
+
+      # ── 5. Preparar artefactos ────────────────────────────────────────────
+      - name: Preparar artefactos del release
+        run: |
+          mkdir -p release-assets
+          
+          # bzImage principal
+          cp linux-src/arch/x86/boot/bzImage release-assets/bzImage_vuln
+          
+          # Metadata para verificación
+          cat > release-assets/kernel-manifest.json << EOF
+          {
+            "kernel_tag": "${{ github.event.inputs.kernel_tag }}",
+            "kernel_commit": "${KERNEL_COMMIT}",
+            "kernel_date": "${KERNEL_DATE}",
+            "vuln_commit_introduced": "72548b093ee3",
+            "fix_commit": "a664bf3d603d",
+            "cve": "CVE-2026-31431",
+            "config_crypto_user_api_aead": "y",
+            "config_crypto_authencesn": "y",
+            "built_by": "github-actions",
+            "built_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "sha256_bzimage": "$(sha256sum release-assets/bzImage_vuln | cut -d' ' -f1)"
+          }
+          EOF
+          
+          # .config del kernel para referencia
+          cp linux-src/.config release-assets/kernel.config
+          
+          # Comprimir .config (es grande)
+          gzip -k release-assets/kernel.config
+          
+          echo "Archivos del release:"
+          ls -lh release-assets/
+          echo ""
+          echo "SHA256 del bzImage:"
+          sha256sum release-assets/bzImage_vuln
+
+      # ── 6. Subir como artefacto de Actions (disponible por 90 días) ───────
+      - name: Subir como artefacto de Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: "bzImage-vuln-${{ github.event.inputs.kernel_tag }}"
+          path: release-assets/
+          retention-days: 90
+
+      # ── 7. Crear GitHub Release con los assets ────────────────────────────
+      - name: Crear GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ github.event.inputs.release_tag }}"
+          name: "Kernel Vulnerable ${{ github.event.inputs.kernel_tag }} — CVE-2026-31431"
+          body: |
+            ## Kernel Linux ${{ github.event.inputs.kernel_tag }} — Vulnerable a CVE-2026-31431
+            
+            **USO EXCLUSIVO EN EL LABORATORIO CONTROLADO DE LA ASIGNATURA.**
+            
+            ### Detalles técnicos
+            - **Kernel:** ${{ github.event.inputs.kernel_tag }} (commit `${{ env.KERNEL_COMMIT }}`)
+            - **Commit vulnerable:** `72548b093ee3` (2017, optimización in-place algif_aead)
+            - **Fix:** `a664bf3d603d` — NO incluido en este build
+            - **Módulos vulnerables:** `CONFIG_CRYPTO_USER_API_AEAD=y`, `CONFIG_CRYPTO_AUTHENCESN=y`
+            
+            ### Instrucciones para estudiantes
+            ```bash
+            # En el devcontainer, en lugar de 'make kernel':
+            make fetch-kernel
+            # Luego:
+            make rootfs
+            make qemu
+            ```
+            
+            ${{ github.event.inputs.release_notes }}
+          files: |
+            release-assets/bzImage_vuln
+            release-assets/kernel-manifest.json
+            release-assets/kernel.config.gz
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 8. Resumen para el docente ─────────────────────────────────────────
+      - name: Resumen final
+        run: |
+          echo ""
+          echo "════════════════════════════════════════════════════"
+          echo "  KERNEL LISTO PARA EL EXAMEN"
+          echo "════════════════════════════════════════════════════"
+          echo ""
+          echo "  Release: ${{ github.event.inputs.release_tag }}"
+          echo "  SHA256: $(sha256sum release-assets/bzImage_vuln | cut -d' ' -f1)"
+          echo ""
+          echo "  Los estudiantes ejecutan:"
+          echo "  $ make fetch-kernel"
+          echo "  (descarga en ~2 min en lugar de compilar en ~25 min)"
+          echo ""
+          echo "  URL del release:"
+          echo "  https://github.com/${{ github.repository }}/releases/tag/${{ github.event.inputs.release_tag }}"
+          echo ""

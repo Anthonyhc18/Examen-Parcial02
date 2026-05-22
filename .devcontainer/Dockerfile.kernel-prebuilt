@@ -1,0 +1,144 @@
+# Dockerfile.kernel-prebuilt
+# ─────────────────────────────────────────────────────────────────────────────
+# USO DEL DOCENTE (correr UNA SOLA VEZ antes del examen):
+#
+#   docker build -f .devcontainer/Dockerfile.kernel-prebuilt \
+#     -t ghcr.io/TU-ORG/copy-fail-kernel:v6.12-vuln \
+#     .devcontainer/
+#
+#   docker push ghcr.io/TU-ORG/copy-fail-kernel:v6.12-vuln
+#
+# Luego en devcontainer.json cambiar la imagen base a esta.
+# Los estudiantes no compilan nada — el devcontainer ya trae el kernel.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Etapa 1: Compilar el kernel (builder) ─────────────────────────────────────
+FROM ubuntu:24.04 AS kernel-builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ARG KERNEL_TAG=v6.12
+ARG JOBS=4
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git make gcc flex bison bc \
+    libncurses-dev libelf-dev libssl-dev \
+    cpio pahole dwarves zstd ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Clonar kernel en el tag vulnerable
+RUN echo "Clonando kernel ${KERNEL_TAG}..." && \
+    git clone --depth 1 \
+      --branch "${KERNEL_TAG}" \
+      https://github.com/torvalds/linux.git \
+      linux && \
+    cd linux && \
+    echo "Commit: $(git rev-parse HEAD)"
+
+WORKDIR /build/linux
+
+# Configurar: tinyconfig + algif_aead + serial QEMU
+RUN make tinyconfig && \
+    # 64-bit
+    scripts/config --enable 64BIT && \
+    # Consola serie
+    scripts/config --enable SERIAL_8250 && \
+    scripts/config --enable SERIAL_8250_CONSOLE && \
+    scripts/config --enable TTY && \
+    # initramfs
+    scripts/config --enable BLK_DEV_INITRD && \
+    scripts/config --enable INITRAMFS_SOURCE && \
+    scripts/config --enable TMPFS && \
+    # Sockets
+    scripts/config --enable NET && \
+    scripts/config --enable UNIX && \
+    scripts/config --enable INET && \
+    # ── SUBSISTEMA VULNERABLE ─────────────────────────────────────────────
+    scripts/config --enable CRYPTO && \
+    scripts/config --enable CRYPTO_USER_API && \
+    scripts/config --enable CRYPTO_USER_API_AEAD && \
+    scripts/config --enable CRYPTO_USER_API_SKCIPHER && \
+    scripts/config --enable CRYPTO_AUTHENCESN && \
+    scripts/config --enable CRYPTO_AES && \
+    scripts/config --enable CRYPTO_CBC && \
+    scripts/config --enable CRYPTO_HMAC && \
+    scripts/config --enable CRYPTO_SHA256 && \
+    # Usuarios y setuid
+    scripts/config --enable MULTIUSER && \
+    # Sistema básico
+    scripts/config --enable PRINTK && \
+    scripts/config --enable EARLY_PRINTK && \
+    scripts/config --enable PROC_FS && \
+    scripts/config --enable SYSFS && \
+    scripts/config --enable DEVTMPFS && \
+    scripts/config --enable DEVTMPFS_MOUNT && \
+    make olddefconfig
+
+# Compilar
+RUN echo "Compilando con ${JOBS} cores..." && \
+    make -j${JOBS} bzImage && \
+    echo "SHA256: $(sha256sum arch/x86/boot/bzImage)"
+
+# Guardar manifest
+RUN echo "{ \
+  \"kernel_tag\": \"${KERNEL_TAG}\", \
+  \"kernel_commit\": \"$(git rev-parse HEAD)\", \
+  \"built_at\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\", \
+  \"config_crypto_user_api_aead\": \"y\", \
+  \"config_crypto_authencesn\": \"y\", \
+  \"cve\": \"CVE-2026-31431\", \
+  \"sha256\": \"$(sha256sum arch/x86/boot/bzImage | cut -d' ' -f1)\" \
+}" > /build/kernel-manifest.json
+
+# ── Etapa 2: Imagen final (runtime) ───────────────────────────────────────────
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TERM=xterm-256color
+# Variable de entorno para que los scripts sepan que el kernel ya está
+ENV KERNEL_PREBUILT=1
+ENV KERNEL_PATH=/opt/kernels/bzImage_vuln
+
+# ── Herramientas de runtime (sin compiladores de kernel) ──────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # QEMU
+    qemu-system-x86 \
+    # BusyBox compilation (rootfs sí se compila por estudiante)
+    git make gcc musl-tools \
+    libncurses-dev \
+    # Python 3.10+ para el PoC
+    python3 python3-pip \
+    # Herramientas del reto
+    strace gdb binutils xxd \
+    # Utilidades
+    curl wget jq vim \
+    # GitHub CLI
+    gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Copiar el kernel pre-compilado ────────────────────────────────────────────
+RUN mkdir -p /opt/kernels
+COPY --from=kernel-builder /build/linux/arch/x86/boot/bzImage /opt/kernels/bzImage_vuln
+COPY --from=kernel-builder /build/linux/.config /opt/kernels/kernel.config
+COPY --from=kernel-builder /build/kernel-manifest.json /opt/kernels/manifest.json
+
+# Crear symlink donde los scripts lo esperan
+RUN mkdir -p /workspaces/copy-fail-challenge/kernel/build && \
+    ln -sf /opt/kernels/bzImage_vuln \
+           /workspaces/copy-fail-challenge/kernel/build/bzImage_vuln && \
+    ln -sf /opt/kernels/manifest.json \
+           /workspaces/copy-fail-challenge/kernel/build/kernel-manifest.json
+
+# ── Usuario student ────────────────────────────────────────────────────────────
+RUN useradd -m -s /bin/bash student && \
+    echo "student:student" | chpasswd
+
+# ── Verificación de integridad al construir ───────────────────────────────────
+RUN echo "Kernel pre-compilado:" && \
+    ls -lh /opt/kernels/bzImage_vuln && \
+    sha256sum /opt/kernels/bzImage_vuln && \
+    python3 -m json.tool /opt/kernels/manifest.json
+
+WORKDIR /workspaces/copy-fail-challenge
+CMD ["/bin/bash"]

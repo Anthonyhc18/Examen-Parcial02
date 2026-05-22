@@ -1,0 +1,193 @@
+name: "Autocalificación — CVE-2026-31431 Lab"
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "hito-*"
+      - "bonus"
+  pull_request:
+    branches: [main]
+
+jobs:
+  grade:
+    name: "Calificar progreso del estudiante"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      # ── 1. Checkout completo (necesitamos todos los tags) ────────────────────
+      - name: Checkout completo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # necesario para git tags y git log
+
+      # ── 2. Python para el grader ─────────────────────────────────────────────
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # ── 3. Ejecutar calificador ───────────────────────────────────────────────
+      - name: Ejecutar autocalificador
+        id: grade
+        run: |
+          python3 grader/grade.py --local --verbose --json > grade_output.json 2>&1 || true
+          python3 grader/grade.py --local --verbose 2>&1 | tee grade_summary.txt || true
+          
+          # Extraer puntuación total
+          TOTAL=$(python3 -c "import json; d=json.load(open('grade_output.json')); print(d.get('total',0))" 2>/dev/null || echo "0")
+          STUDENT=$(python3 -c "import json; d=json.load(open('grade_output.json')); print(d.get('student','desconocido'))" 2>/dev/null || echo "desconocido")
+          
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "student=$STUDENT" >> $GITHUB_OUTPUT
+
+      # ── 4. Verificar tags presentes ───────────────────────────────────────────
+      - name: Verificar tags de hitos
+        id: tags
+        run: |
+          echo "Tags presentes:"
+          git tag -l | sort
+          
+          for tag in hito-1 hito-2 hito-3 hito-4 bonus; do
+            if git tag -l | grep -q "^${tag}$"; then
+              echo "✅ $tag"
+              echo "has_${tag//-/_}=true" >> $GITHUB_OUTPUT
+            else
+              echo "❌ $tag (ausente)"
+              echo "has_${tag//-/_}=false" >> $GITHUB_OUTPUT
+            fi
+          done
+
+      # ── 5. Verificar archivos de evidencia ────────────────────────────────────
+      - name: Verificar archivos de evidencia
+        run: |
+          echo "Archivos en evidence/:"
+          ls -la evidence/ 2>/dev/null || echo "(directorio vacío o no existe)"
+          
+          echo ""
+          echo "Verificaciones de contenido:"
+          
+          for f in hito1_vuln_confirmed.txt hito2_root_shell.txt \
+                   hito3_mitigation.txt hito4_patched.txt; do
+            if [ -f "evidence/$f" ]; then
+              size=$(wc -c < "evidence/$f")
+              echo "  ✅ $f  (${size} bytes)"
+            else
+              echo "  ❌ $f  (no encontrado)"
+            fi
+          done
+          
+          # Verificar parche
+          if [ -f "patches/fix_algif_aead.patch" ]; then
+            echo "  ✅ patches/fix_algif_aead.patch  ($(wc -l < patches/fix_algif_aead.patch) líneas)"
+          else
+            echo "  ❌ patches/fix_algif_aead.patch  (no encontrado)"
+          fi
+          
+          # Verificar reporte
+          if [ -f "REPORT.md" ]; then
+            words=$(wc -w < REPORT.md)
+            echo "  ✅ REPORT.md  (${words} palabras)"
+          else
+            echo "  ❌ REPORT.md  (no encontrado)"
+          fi
+
+      # ── 6. Anti-plagio: verificar hostnames ───────────────────────────────────
+      - name: Verificar integridad de evidencias (anti-copia)
+        run: |
+          if [ -f "evidence/hito1_vuln_confirmed.txt" ] && \
+             [ -f "evidence/hito2_root_shell.txt" ]; then
+            
+            HN1=$(grep -oE "copy-fail-[a-zA-Z0-9-]+" evidence/hito1_vuln_confirmed.txt 2>/dev/null | head -1 || echo "")
+            HN2=$(grep -oE "copy-fail-[a-zA-Z0-9-]+" evidence/hito2_root_shell.txt 2>/dev/null | head -1 || echo "")
+            
+            echo "Hostname en hito-1: $HN1"
+            echo "Hostname en hito-2: $HN2"
+            
+            if [ -n "$HN1" ] && [ -n "$HN2" ] && [ "$HN1" = "$HN2" ]; then
+              echo "✅ Hostnames consistentes"
+            elif [ -z "$HN1" ] || [ -z "$HN2" ]; then
+              echo "⚠️ No se pudo extraer hostname — revisar manualmente"
+            else
+              echo "⚠️ Hostnames distintos — posible copia entre estudiantes"
+              echo "   hito-1: $HN1 | hito-2: $HN2"
+            fi
+          fi
+
+      # ── 7. Generar badge de estado ────────────────────────────────────────────
+      - name: Generar resumen de calificación
+        if: always()
+        run: |
+          cat grade_summary.txt 2>/dev/null || echo "No se pudo generar resumen"
+          
+          TOTAL="${{ steps.grade.outputs.total }}"
+          STUDENT="${{ steps.grade.outputs.student }}"
+          
+          echo ""
+          echo "════════════════════════════════════════"
+          echo "  RESUMEN PARA EL DOCENTE"
+          echo "  Estudiante: $STUDENT"
+          echo "  Puntuación: $TOTAL / 9.0"
+          echo "  Commit:     $GITHUB_SHA"
+          echo "  Fecha:      $(date -u '+%Y-%m-%d %H:%M UTC')"
+          echo "════════════════════════════════════════"
+
+      # ── 8. Subir artefactos de calificación ──────────────────────────────────
+      - name: Subir reporte de calificación
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "grade-report-${{ github.actor }}-${{ github.run_number }}"
+          path: |
+            grade_summary.txt
+            grade_output.json
+          retention-days: 90
+
+      # ── 9. Comentar en PR (si aplica) ─────────────────────────────────────────
+      - name: Comentar puntuación en PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const total = '${{ steps.grade.outputs.total }}';
+            const student = '${{ steps.grade.outputs.student }}';
+            const sha = context.sha.substring(0, 8);
+            
+            const tags = {
+              hito1: '${{ steps.tags.outputs.has_hito_1 }}' === 'true',
+              hito2: '${{ steps.tags.outputs.has_hito_2 }}' === 'true',
+              hito3: '${{ steps.tags.outputs.has_hito_3 }}' === 'true',
+              hito4: '${{ steps.tags.outputs.has_hito_4 }}' === 'true',
+              bonus: '${{ steps.tags.outputs.has_bonus }}' === 'true',
+            };
+            
+            const icon = (b) => b ? '✅' : '❌';
+            
+            const body = `## 🔐 Autocalificación — CVE-2026-31431 Lab
+            
+            **Estudiante:** ${student}  
+            **Commit:** \`${sha}\`  
+            **Puntuación estimada:** \`${total} / 9.0\`
+            
+            | Hito | Estado | Puntos |
+            |------|--------|--------|
+            | Hito 1 — Kernel vulnerable | ${icon(tags.hito1)} | 2.0 |
+            | Hito 2 — Exploit exitoso   | ${icon(tags.hito2)} | 3.0 |
+            | Hito 3 — Mitigación        | ${icon(tags.hito3)} | 1.5 |
+            | Hito 4 — Parche permanente | ${icon(tags.hito4)} | 2.0 |
+            | Bonus  — Reporte técnico   | ${icon(tags.bonus)} | 0.5 |
+            
+            > Puntuación basada en tags presentes y verificación de archivos de evidencia.
+            > El docente puede revisar los artefactos descargando el reporte del workflow.
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });

@@ -1,0 +1,26 @@
+# Binarios del kernel (pesados, no versionar)
+kernel/linux/
+kernel/busybox/
+kernel/initramfs/
+kernel/build/
+!kernel/build/vuln_commit.txt
+!kernel/build/patched_commit.txt
+
+# Archivos temporales de QEMU
+*.qcow2
+*.img
+*.iso
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+grader/__pycache__/
+
+# VSCode local
+.vscode/settings.json
+
+# NO ignorar:
+# evidence/   ← los estudiantes deben commitear esto
+# patches/    ← los estudiantes deben commitear esto
+# REPORT.md   ← bonus

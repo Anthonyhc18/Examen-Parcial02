@@ -1,0 +1,33 @@
+{
+  "name": "Copy Fail — CVE-2026-31431 Lab (kernel pre-compilado)",
+
+  "image": "ghcr.io/TU-ORG/copy-fail-kernel:v6.12-vuln",
+
+  "runArgs": [
+    "--privileged",
+    "--device=/dev/kvm"
+  ],
+  "capAdd": ["SYS_ADMIN", "NET_ADMIN"],
+
+  "remoteEnv": {
+    "KERNEL_PREBUILT": "1",
+    "KERNEL_PATH": "/opt/kernels/bzImage_vuln",
+    "KERNEL_RELEASE_TAG": "kernel-v6.12-vuln"
+  },
+
+  "postCreateCommand": "bash /workspaces/copy-fail-challenge/scripts/00_welcome.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "mhutchie.git-graph",
+        "eamodio.gitlens"
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "git.autofetch": true
+      }
+    }
+  }
+}

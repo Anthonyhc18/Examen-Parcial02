@@ -1,0 +1,61 @@
+{
+  "curso": "Introducción a UNIX — UIDE",
+  "evaluacion": "Parcial 2 — Práctica CVE-2026-31431",
+  "total_puntos": 9.0,
+  "nota_sobre_doce": 3.0,
+  "hitos": {
+    "hito-1": {
+      "nombre": "Ambiente vulnerable confirmado",
+      "puntos": 2.0,
+      "criterios": [
+        "Kernel Linux 6.x corriendo en QEMU",
+        "Usuario sin privilegios (student, uid≠0)",
+        "Módulo algif_aead cargado (lsmod o /proc/modules)",
+        "Hostname copy-fail-NOMBRE visible (evidencia única)"
+      ]
+    },
+    "hito-2": {
+      "nombre": "Exploit exitoso — root shell",
+      "puntos": 3.0,
+      "criterios": [
+        "uid=0(root) visible en la salida",
+        "Exploit PoC referenciado/usado (CVE-2026-31431)",
+        "Evidencia tiene hostname consistente con hito-1",
+        "Timestamp dentro de la ventana del examen"
+      ]
+    },
+    "hito-3": {
+      "nombre": "Mitigación temporal (rmmod algif_aead)",
+      "puntos": 1.5,
+      "criterios": [
+        "algif_aead removido del kernel (rmmod)",
+        "Exploit falla post-mitigación (error documentado)",
+        "Comprensión de qué rompe y qué no rompe la mitigación"
+      ]
+    },
+    "hito-4": {
+      "nombre": "Parche permanente al kernel",
+      "puntos": 2.0,
+      "criterios": [
+        "Archivo patches/fix_algif_aead.patch presente",
+        "Parche modifica crypto/algif_aead.c correctamente",
+        "Kernel recompilado con el parche",
+        "Exploit falla en el kernel parcheado (evidencia)"
+      ]
+    },
+    "bonus": {
+      "nombre": "Reporte técnico",
+      "puntos": 0.5,
+      "criterios": [
+        "Mínimo 300 palabras",
+        "Explica el bug raíz (in-place vs out-of-place)",
+        "Explica por qué es stealthy (page cache vs disco)",
+        "Conecta con conceptos del curso (setuid, permisos, inodos)"
+      ]
+    }
+  },
+  "penalizaciones": {
+    "copia_entre_estudiantes": "50% del hito si los hostnames no coinciden internamente",
+    "commits_fuera_de_ventana": "El docente verifica timestamps del CI"
+  }
+}
