@@ -32,7 +32,7 @@ cd "$KERNEL_SRC"
 echo ""
 echo -e "${CYAN}[2/5] Guardando hash del commit vulnerable (evidencia)...${NC}"
 VULN_HASH=$(git rev-parse HEAD)
-echo "$VULN_HASH" > /workspaces/copy-fail-challenge/kernel/vuln_commit.txt
+echo "$VULN_HASH" > /workspaces/Examen-Parcial02/kernel/vuln_commit.txt
 echo "  Hash: $VULN_HASH"
 
 echo ""
