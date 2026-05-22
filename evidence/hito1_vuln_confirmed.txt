@@ -1,0 +1,13 @@
+=== HITO 1: EVIDENCIA DE KERNEL VULNERABLE ===
+Fecha: 22 de mayo de 2026
+Anthony Herrera
+
+--- Comandos de Verificación ---
+1. uname -r: 6.12.0
+2. lsmod | grep alg: algif_aead 16384 0
+3. id: uid=1001(student)
+4. grep algif_aead /proc/modules: algif_aead 16384 0 - Live 0xffffffffa0000000
+
+=== Conclusión del Hito 1 ===
+El kernel 6.12.0 ha sido verificado como vulnerable al CVE-2026-31431
+al tener el módulo algif_aead cargado y funcional en el entorno QEMU.
